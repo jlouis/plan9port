@@ -12,7 +12,7 @@
 
 extern void _flushmemscreen(Rectangle);
 int forcedpi = 0;
-int displaydpi = 100;
+int displaydpi = 220;
 
 #define NHASH (1<<5)
 #define HASHMASK (NHASH-1)
