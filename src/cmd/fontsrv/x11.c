@@ -3,6 +3,7 @@
 #include <fontconfig/fontconfig.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_LCD_FILTER_H
 
 #include <libc.h>
 #include <draw.h>
@@ -11,7 +12,8 @@
 
 static FcConfig    *fc;
 static FT_Library  lib;
-static int         dpi = 96;
+static int	   aa_flags = FT_LOAD_TARGET_NORMAL;
+static int	   linegap = 2;
 
 void
 loadfonts(void)
@@ -20,7 +22,7 @@ loadfonts(void)
 	FT_Error e;
 	FcFontSet *sysfonts;
 
-	if(!FcInit() || (fc=FcInitLoadConfigAndFonts()) == NULL) {
+	if((fc=FcInitLoadConfigAndFonts()) == NULL) {
 		fprint(2, "fontconfig initialization failed\n");
 		exits("fontconfig failed");
 	}
@@ -79,9 +81,9 @@ load(XFont *f)
 		return;
 	}
 
+	f->height = face->height;
+	f->originy = face->descender;
 	f->unit = face->units_per_EM;
-	f->height = (int)((face->ascender - face->descender) * 1.2);
-	f->originy = face->descender; // bbox.yMin (or descender)  is negative, becase the baseline is y-coord 0
 
 	for(charcode=FT_Get_First_Char(face, &glyph_index); glyph_index != 0;
 		charcode=FT_Get_Next_Char(face, charcode, &glyph_index)) {
@@ -108,12 +110,11 @@ mksubfont(char *name, int lo, int hi, int size, int antialias)
 	FT_Face face;
 	FT_Error e;
 	Memimage *m, *mc, *m1;
-	double pixel_size;
 	int x, y, y0;
+	int descent, height;
 	int i;
 	Fontchar *fc, *fc0;
 	Memsubfont *sf;
-	//Point rect_points[4];
 
 	xf = nil;
 	for(xfp=xfont, xfe=xfont+nxfont; xfp != xfe; xfp++) {
@@ -133,17 +134,27 @@ mksubfont(char *name, int lo, int hi, int size, int antialias)
 		return nil;
 	}
 
-	e = FT_Set_Char_Size(face, 0, size<<6, dpi, dpi);
+	/* Manipulate the incoming size parameter by repeating the calculation done in the main fontsrv.
+ 	   fontsrv believes this to be the pixel height, so set the font at that pixel height as well
+ 	*/
+ 	size = xf->height * (int)size/xf->unit + 0.99999999;
+
+	//fprint(2, "Size: %d\n", size);
+
+	/* Let Freetype2 render the font at a given pixel size */
+	e = FT_Set_Pixel_Sizes(face, 0, size - linegap);
 	if(e){
-		fprint(2, "FT_Set_Char_Size failed\n");
+		fprint(2, "FT_Set_Pixel_Sizes failed\n");
 		FT_Done_Face(face);
 		return nil;
 	}
 
-	pixel_size = (dpi*size)/72.0;
-	x = (int)((face->max_advance_width) * pixel_size/xf->unit + 0.99999999);
-	y = (int)((face->ascender - face->descender) * pixel_size/xf->unit + 0.99999999);
-	y0 = (int)(-face->descender * pixel_size/xf->unit + 0.99999999);
+	x = face->size->metrics.max_advance;
+	descent = face->size->metrics.descender>>6;
+	height = face->size->metrics.height>>6;
+
+	y = height;
+	y0 = -descent;
 
 	m = allocmemimage(Rect(0, 0, x*(hi+1-lo), y), antialias ? GREY8 : GREY1);
 	if(m == nil) {
@@ -170,11 +181,6 @@ mksubfont(char *name, int lo, int hi, int size, int antialias)
 	}
 	fc0 = fc;
 
-	//rect_points[0] = mc->r.min;
-	//rect_points[1] = Pt(mc->r.max.x, mc->r.min.y);
-	//rect_points[2] = mc->r.max;
-	//rect_points[3] = Pt(mc->r.min.x, mc->r.max.y);
-
 	x = 0;
 	for(i=lo; i<=hi; i++, fc++) {
 		int r;
@@ -182,7 +188,7 @@ mksubfont(char *name, int lo, int hi, int size, int antialias)
 
 		memfillcolor(mc, DBlack);
 
-		e = FT_Load_Char(face, i, FT_LOAD_RENDER|(antialias ? 0:FT_LOAD_TARGET_MONO));
+		e = FT_Load_Char(face, i, FT_LOAD_RENDER|FT_LOAD_NO_HINTING|(antialias ? aa_flags:FT_LOAD_TARGET_MONO));
 		if(e){
 			fprint(2, "FT_Load_Char failed for %d\n", i);
 			//mempoly(mc, rect_points, 4, Endsquare, Endsquare, 0, memopaque, ZP, S);
@@ -202,6 +208,7 @@ mksubfont(char *name, int lo, int hi, int size, int antialias)
 			for(r=0; r < bitmap->rows; r++)
 				memmove(base + r*mc->width*sizeof(u32int), bitmap->buffer + r*bitmap->pitch, bitmap->pitch);
 
+			//fprint(2, "bitmap_left: %d, bitmap_top: %d\n", face->glyph->bitmap_left, face->glyph->bitmap_top);
 			memimagedraw(m, Rect(x, 0, x + advance, y), mc,
 				Pt(-face->glyph->bitmap_left, -(y - y0 - face->glyph->bitmap_top)),
 				memopaque, ZP, S);
