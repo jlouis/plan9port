@@ -25,8 +25,10 @@ buildfont(Display *d, char *buf, char *name)
 	if(fnt == 0)
 		return 0;
 	memset(fnt, 0, sizeof(Font));
+	fnt->scale = 1;
 	fnt->display = d;
 	fnt->name = strdup(name);
+	fnt->namespec = strdup(name);
 	fnt->ncache = NFCACHE+NFLOOK;
 	fnt->nsubf = NFSUBF;
 	fnt->cache = malloc(fnt->ncache * sizeof(fnt->cache[0]));
@@ -134,8 +136,27 @@ freefont(Font *f)
 	}
 	freeimage(f->cacheimage);
 	free(f->name);
+	free(f->namespec);
 	free(f->cache);
 	free(f->subf);
 	free(f->sub);
+
+	if(f->ondisplaylist) {
+		f->ondisplaylist = 0;
+		if(f->next)
+			f->next->prev = f->prev;
+		else
+			f->display->lastfont = f->prev;
+		if(f->prev)
+			f->prev->next = f->next;
+		else
+			f->display->firstfont = f->next;
+	}
+
+	if(f->lodpi != f)	
+		freefont(f->lodpi);
+	if(f->hidpi != f)
+		freefont(f->hidpi);
+
 	free(f);
 }
